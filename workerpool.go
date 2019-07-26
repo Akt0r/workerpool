@@ -1,6 +1,7 @@
 package workerpool
 
 import (
+	"container/list"
 	"fmt"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ type Pool struct {
 	maxWorkerCount int
 	workers        map[*Worker]void
 	vacanciesLock  sync.RWMutex
+	observers      *list.List
+	obsLock        sync.RWMutex
 }
 
 //NewPool возвращает новый инициализированный объект Pool
@@ -30,6 +33,7 @@ func NewPool(maxWorkerCount int) (*Pool, error) {
 		taskQueue:      make(chan *Task),
 		vacancyChanged: make(chan void),
 		workers:        make(map[*Worker]void),
+		observers:      list.New(),
 	}
 	pool.setupVacancies(maxWorkerCount, true)
 	return pool, nil
@@ -45,33 +49,54 @@ func (p *Pool) AssignTask(request *Task, maxWorkerCount int, timeout time.Durati
 
 	vacancies := p.vacancies
 	for {
+		//We prioritize worker reuse over creating
+		//new workers
 		select {
 		case p.taskQueue <- request:
 			{
-				//Задача назначена свободному исполнителю
-				//Обновим вакансии и завершим работу менеджера
-				//по обработке запроса
-				vacancies = p.vacancies
+				//Task successfully assigned
+				return false, nil
+			}
+		default:
+		}
+
+		vacancies = p.vacancies
+		//No free workers at the moment. So let's
+		//wait for someone
+		select {
+		case p.taskQueue <- request:
+			{
+				//Task successfully assigned
 				return false, nil
 			}
 		case <-p.vacancyChanged:
 			{
-				//Обновим список вакансий
+				//Refresh vacancies channel
 				vacancies = p.vacancies
 			}
 		case <-vacancies:
 			{
-				//Свободных исполнителей нет, но есть вакансии
-				//создадим нового исполнителя
 				p.createWorker()
 			}
 		case <-time.After(timeout):
 			{
-				//Исполнитель не был назначен в течение отведённого времени
+				//No free worker found
 				return true, nil
 			}
 		}
 	}
+}
+
+//RegisterObserver registers observer that will get notifications
+//about pool state changes
+func (p *Pool) RegisterObserver(o Observer) error {
+	if o == nil {
+		return fmt.Errorf("Observer can't be nil")
+	}
+	p.obsLock.Lock()
+	p.observers.PushBack(o)
+	p.obsLock.Unlock()
+	return nil
 }
 
 //createWorker создаёт нового исполнителя и регистрирует
@@ -82,6 +107,14 @@ func (p *Pool) createWorker() {
 		delete(p.workers, w)
 		if p.maxWorkerCount > len(p.workers) {
 			p.vacancies <- signal
+		}
+		p.notifyObservers(func(o Observer) {
+			o.WorkerDisposed(p)
+		})
+		if len(p.workers) == 0 {
+			p.notifyObservers(func(o Observer) {
+				o.AllWorkersDisposed(p)
+			})
 		}
 		p.vacanciesLock.Unlock()
 	}
@@ -95,6 +128,9 @@ func (p *Pool) createWorker() {
 	if p.isInfiniteWorkersAllowed() {
 		p.vacancies <- signal
 	}
+	p.notifyObservers(func(o Observer) {
+		o.WorkerCreated(p)
+	})
 	go worker.Listen(p.taskQueue)
 }
 
@@ -151,4 +187,14 @@ func (p *Pool) notifyForVacancies() {
 //количества одновременно работающих исполнителей
 func (p *Pool) isInfiniteWorkersAllowed() bool {
 	return p.maxWorkerCount == 0
+}
+
+//notifyObservers notifies all observers about some event
+func (p *Pool) notifyObservers(callback func(o Observer)) {
+	p.obsLock.RLock()
+	defer p.obsLock.RUnlock()
+	for elem := p.observers.Front(); elem != nil; elem = elem.Next() {
+		obs := elem.Value.(Observer)
+		callback(obs)
+	}
 }

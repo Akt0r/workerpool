@@ -180,6 +180,74 @@ func TestManagerTimeOut(t *testing.T) {
 	}
 }
 
+func TestWorkersReuse(t *testing.T) {
+	t.Parallel()
+	concurrentTasks := 10
+	sut, ctorErr := NewPool(0)
+	if ctorErr != nil {
+		t.Fatalf("ctorErr: %s", ctorErr.Error())
+	}
+	outChan := make(chan string)
+	task := &Task{
+		Task: func() string {
+			time.Sleep(time.Duration(100) * time.Millisecond)
+			return "OK"
+		},
+		TaskResult: outChan,
+	}
+	//lets create concurrentTasks amount of workers
+	for i := 0; i < concurrentTasks; i++ {
+		if timeout, err := sut.AssignTask(task, 0, time.Duration(100*time.Second)); timeout || err != nil {
+			t.Fatalf("Task assigning failed or timeout has been reached")
+		}
+	}
+	//now wait for workers complete their tasks
+	for i := 0; i < concurrentTasks; i++ {
+		<-outChan
+	}
+	//so we have concurrentTasks amount of idle workers
+	//from now on no new workers should be created
+	//for incoming tasks
+	restrictiveObs := &ObserverStub{}
+	restrictiveObs.WorkerCreatedCallback = func(p *Pool) {
+		t.Fatalf("Oh no. Worker has been created.")
+	}
+	restrictiveObs.WorkerDisposedCallback = func(p *Pool) {}
+	restrictiveObs.AllWorkersDisposedCallback = func(p *Pool) {}
+
+	sut.RegisterObserver(restrictiveObs)
+	for i := 0; i < 10; i++ {
+		//lets create concurrentTasks amount of workers
+		for i := 0; i < concurrentTasks; i++ {
+			if timeout, err := sut.AssignTask(task, 0, time.Duration(100*time.Second)); timeout || err != nil {
+				t.Fatalf("Task assigning failed or timeout has been reached")
+			}
+		}
+		//now wait for workers complete their tasks
+		for i := 0; i < concurrentTasks; i++ {
+			<-outChan
+		}
+	}
+}
+
+type ObserverStub struct {
+	WorkerCreatedCallback      func(*Pool)
+	WorkerDisposedCallback     func(*Pool)
+	AllWorkersDisposedCallback func(*Pool)
+}
+
+func (o *ObserverStub) WorkerCreated(p *Pool) {
+	o.WorkerCreatedCallback(p)
+}
+
+func (o *ObserverStub) WorkerDisposed(p *Pool) {
+	o.WorkerDisposedCallback(p)
+}
+
+func (o *ObserverStub) AllWorkersDisposed(p *Pool) {
+	o.AllWorkersDisposedCallback(p)
+}
+
 func runProcess(m *Pool, t *testing.T, maxConcurrentWorkers int, outChan chan string) {
 	task := taskFactory(1, "", outChan)
 	timeout, processErr := m.AssignTask(task, maxConcurrentWorkers, time.Duration(30)*time.Second)
