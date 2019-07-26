@@ -10,7 +10,7 @@ func TestSingleWorkerSingleTask(t *testing.T) {
 	t.Parallel()
 	maxConcurrentWorkers := 1
 	numberOfTasks := 1
-	m, ctorErr := NewManager(maxConcurrentWorkers)
+	m, ctorErr := NewPool(maxConcurrentWorkers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -29,7 +29,7 @@ func TestSingleWorker(t *testing.T) {
 	t.Parallel()
 	maxConcurrentWorkers := 1
 	numberOfTasks := 5
-	m, ctorErr := NewManager(maxConcurrentWorkers)
+	m, ctorErr := NewPool(maxConcurrentWorkers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -48,7 +48,7 @@ func TestMultipleWorkers(t *testing.T) {
 	t.Parallel()
 	maxConcurrentWorkers := 3
 	numberOfTasks := 10
-	m, ctorErr := NewManager(maxConcurrentWorkers)
+	m, ctorErr := NewPool(maxConcurrentWorkers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -68,7 +68,7 @@ func TestDecreaseWorkers(t *testing.T) {
 	maxConcurrentWorkersInitial := 4
 	maxConcurrentWorkersLater := 2
 	numberOfTasks := 13
-	m, ctorErr := NewManager(maxConcurrentWorkersInitial)
+	m, ctorErr := NewPool(maxConcurrentWorkersInitial)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -96,7 +96,7 @@ func TestIncreaseWorkers(t *testing.T) {
 	maxConcurrentWorkersInitial := 1
 	maxConcurrentWorkersLater := 5
 	numberOfTasks := 16
-	m, ctorErr := NewManager(maxConcurrentWorkersInitial)
+	m, ctorErr := NewPool(maxConcurrentWorkersInitial)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -120,7 +120,7 @@ func TestIncreaseToInfiniteWorkers(t *testing.T) {
 	maxConcurrentWorkersInitial := 1
 	maxConcurrentWorkersLater := 0
 	numberOfTasks := 16
-	m, ctorErr := NewManager(maxConcurrentWorkersInitial)
+	m, ctorErr := NewPool(maxConcurrentWorkersInitial)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -144,7 +144,7 @@ func TestDecreaseFromInfiniteWorkers(t *testing.T) {
 	maxConcurrentWorkersInitial := 0
 	maxConcurrentWorkersLater := 1
 	numberOfTasks := 10
-	m, ctorErr := NewManager(maxConcurrentWorkersInitial)
+	m, ctorErr := NewPool(maxConcurrentWorkersInitial)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -166,7 +166,7 @@ func TestDecreaseFromInfiniteWorkers(t *testing.T) {
 func TestManagerTimeOut(t *testing.T) {
 	t.Parallel()
 	maxConcurrentWorkers := 1
-	m, ctorErr := NewManager(maxConcurrentWorkers)
+	m, ctorErr := NewPool(maxConcurrentWorkers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -180,7 +180,7 @@ func TestManagerTimeOut(t *testing.T) {
 	}
 }
 
-func runProcess(m *Manager, t *testing.T, maxConcurrentWorkers int, outChan chan string) {
+func runProcess(m *Pool, t *testing.T, maxConcurrentWorkers int, outChan chan string) {
 	task := taskFactory(1, "", outChan)
 	timeout, processErr := m.AssignTask(task, maxConcurrentWorkers, time.Duration(30)*time.Second)
 	if processErr != nil {

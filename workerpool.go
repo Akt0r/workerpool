@@ -10,9 +10,9 @@ type void struct{}
 
 var signal void
 
-// Manager позволяет распределять работу на несколько
+// Pool позволяет распределять работу на несколько
 // исполнителей
-type Manager struct {
+type Pool struct {
 	taskQueue      chan *Task
 	vacancyChanged chan void
 	vacancies      chan void
@@ -21,49 +21,49 @@ type Manager struct {
 	vacanciesLock  sync.RWMutex
 }
 
-//NewManager возвращает новый инициализированный объект Manager
-func NewManager(maxWorkerCount int) (*Manager, error) {
+//NewPool возвращает новый инициализированный объект Pool
+func NewPool(maxWorkerCount int) (*Pool, error) {
 	if maxWorkerCount < 0 {
 		return nil, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
 	}
-	manager := &Manager{
+	pool := &Pool{
 		taskQueue:      make(chan *Task),
 		vacancyChanged: make(chan void),
 		workers:        make(map[*Worker]void),
 	}
-	manager.setupVacancies(maxWorkerCount, true)
-	return manager, nil
+	pool.setupVacancies(maxWorkerCount, true)
+	return pool, nil
 }
 
 //AssignTask распределяет работу между несколькими исполнителями
 //Возвращает флаг таймаута поиска исполнителя и ошибку
-func (m *Manager) AssignTask(request *Task, maxWorkerCount int, timeout time.Duration) (bool, error) {
+func (p *Pool) AssignTask(request *Task, maxWorkerCount int, timeout time.Duration) (bool, error) {
 	if maxWorkerCount < 0 {
 		return false, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
 	}
-	m.setupVacancies(maxWorkerCount, false)
+	p.setupVacancies(maxWorkerCount, false)
 
-	vacancies := m.vacancies
+	vacancies := p.vacancies
 	for {
 		select {
-		case m.taskQueue <- request:
+		case p.taskQueue <- request:
 			{
 				//Задача назначена свободному исполнителю
 				//Обновим вакансии и завершим работу менеджера
 				//по обработке запроса
-				vacancies = m.vacancies
+				vacancies = p.vacancies
 				return false, nil
 			}
-		case <-m.vacancyChanged:
+		case <-p.vacancyChanged:
 			{
 				//Обновим список вакансий
-				vacancies = m.vacancies
+				vacancies = p.vacancies
 			}
 		case <-vacancies:
 			{
 				//Свободных исполнителей нет, но есть вакансии
 				//создадим нового исполнителя
-				m.createWorker()
+				p.createWorker()
 			}
 		case <-time.After(timeout):
 			{
@@ -76,47 +76,47 @@ func (m *Manager) AssignTask(request *Task, maxWorkerCount int, timeout time.Dur
 
 //createWorker создаёт нового исполнителя и регистрирует
 //его в справочнике исполнителей workers
-func (m *Manager) createWorker() {
+func (p *Pool) createWorker() {
 	workerStopped := func(w *Worker) {
-		m.vacanciesLock.Lock()
-		delete(m.workers, w)
-		if m.maxWorkerCount > len(m.workers) {
-			m.vacancies <- signal
+		p.vacanciesLock.Lock()
+		delete(p.workers, w)
+		if p.maxWorkerCount > len(p.workers) {
+			p.vacancies <- signal
 		}
-		m.vacanciesLock.Unlock()
+		p.vacanciesLock.Unlock()
 	}
-	m.vacanciesLock.Lock()
-	defer m.vacanciesLock.Unlock()
+	p.vacanciesLock.Lock()
+	defer p.vacanciesLock.Unlock()
 	worker := &Worker{
 		StopSignal:   make(chan void, 1),
 		StopCallback: workerStopped,
 	}
-	m.workers[worker] = signal
-	if m.isInfiniteWorkersAllowed() {
-		m.vacancies <- signal
+	p.workers[worker] = signal
+	if p.isInfiniteWorkersAllowed() {
+		p.vacancies <- signal
 	}
-	go worker.Listen(m.taskQueue)
+	go worker.Listen(p.taskQueue)
 }
 
 //setupVacancies управляет количеством текущих вакансий
-func (m *Manager) setupVacancies(maxWorkerCount int, isInit bool) {
-	m.vacanciesLock.Lock()
-	defer m.vacanciesLock.Unlock()
-	if !isInit && m.maxWorkerCount == maxWorkerCount {
+func (p *Pool) setupVacancies(maxWorkerCount int, isInit bool) {
+	p.vacanciesLock.Lock()
+	defer p.vacanciesLock.Unlock()
+	if !isInit && p.maxWorkerCount == maxWorkerCount {
 		return
 	}
-	m.maxWorkerCount = maxWorkerCount
+	p.maxWorkerCount = maxWorkerCount
 
-	if !m.isInfiniteWorkersAllowed() {
-		currentWorkersCount := len(m.workers)
-		m.vacancies = make(chan void, maxWorkerCount)
+	if !p.isInfiniteWorkersAllowed() {
+		currentWorkersCount := len(p.workers)
+		p.vacancies = make(chan void, maxWorkerCount)
 		//Создадим в новом канале вакансий вакансии в количестве maxWorkerCount - currentWorkersCount
 		for i := currentWorkersCount; i < maxWorkerCount; i++ {
-			m.vacancies <- signal
+			p.vacancies <- signal
 		}
 		i := 0
 		//Пошлём "лишним" исполнителям сигнал остановки
-		for w := range m.workers {
+		for w := range p.workers {
 			if i >= currentWorkersCount-maxWorkerCount {
 				break
 			}
@@ -128,18 +128,18 @@ func (m *Manager) setupVacancies(maxWorkerCount int, isInit bool) {
 			i++
 		}
 	} else {
-		m.vacancies = make(chan void, 1)
-		m.vacancies <- signal
+		p.vacancies = make(chan void, 1)
+		p.vacancies <- signal
 	}
-	m.notifyForVacancies()
+	p.notifyForVacancies()
 }
 
 //notifyForVacancies уведомляет все ожидающие запросы
 //об изменившихся вакансиях
-func (m *Manager) notifyForVacancies() {
+func (p *Pool) notifyForVacancies() {
 	for {
 		select {
-		case m.vacancyChanged <- signal:
+		case p.vacancyChanged <- signal:
 			break
 		default:
 			return
@@ -149,6 +149,6 @@ func (m *Manager) notifyForVacancies() {
 
 //isInfiniteWorkersAllowed возвращает признак  отсутсвия ограничения
 //количества одновременно работающих исполнителей
-func (m *Manager) isInfiniteWorkersAllowed() bool {
-	return m.maxWorkerCount == 0
+func (p *Pool) isInfiniteWorkersAllowed() bool {
+	return p.maxWorkerCount == 0
 }
