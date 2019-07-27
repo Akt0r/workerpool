@@ -7,8 +7,12 @@ import (
 
 //Task sample task type
 type Task struct {
-	Task       func() string
-	TaskResult chan<- string
+	Task   func() TaskResult
+	Result chan<- TaskResult
+}
+
+//TaskResult contains info about task completion
+type TaskResult interface {
 }
 
 //Worker provides simple processing structure
@@ -36,12 +40,12 @@ func (w *Worker) Listen(taskQueue <-chan *Task) {
 			}
 		case task := <-taskQueue:
 			{
-				if task.Task == nil || task.TaskResult == nil {
+				if task.Task == nil || task.Result == nil {
 					continue
 				}
 				taskResult := task.Task()
 				verboseTaskResult := fmt.Sprintf("%s complete work at %s %s", w.Name, time.Now().Format("15:04:05"), taskResult)
-				task.TaskResult <- verboseTaskResult
+				task.Result <- verboseTaskResult
 				select {
 				case <-w.StopSignal:
 					{

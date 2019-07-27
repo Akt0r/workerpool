@@ -15,7 +15,7 @@ func TestSingleWorkerSingleTask(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < numberOfTasks; i++ {
 		go runProcess(m, t, maxConcurrentWorkers, outChan)
 	}
@@ -34,7 +34,7 @@ func TestSingleWorker(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < numberOfTasks; i++ {
 		go runProcess(m, t, maxConcurrentWorkers, outChan)
 	}
@@ -53,7 +53,7 @@ func TestMultipleWorkers(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < numberOfTasks; i++ {
 		go runProcess(m, t, maxConcurrentWorkers, outChan)
 	}
@@ -73,7 +73,7 @@ func TestDecreaseWorkers(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < maxConcurrentWorkersInitial; i++ {
 		go runProcess(m, t, maxConcurrentWorkersInitial, outChan)
 	}
@@ -101,7 +101,7 @@ func TestIncreaseWorkers(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < 4; i++ {
 		go runProcess(m, t, maxConcurrentWorkersInitial, outChan)
 	}
@@ -125,7 +125,7 @@ func TestIncreaseToInfiniteWorkers(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < 4; i++ {
 		go runProcess(m, t, maxConcurrentWorkersInitial, outChan)
 	}
@@ -149,7 +149,7 @@ func TestDecreaseFromInfiniteWorkers(t *testing.T) {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	for i := 0; i < 5; i++ {
 		go runProcess(m, t, maxConcurrentWorkersInitial, outChan)
 	}
@@ -170,7 +170,7 @@ func TestManagerTimeOut(t *testing.T) {
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	task := taskFactory(8, "8s", outChan)
 	m.AssignTask(task, 1, time.Duration(30)*time.Second)
 	task2 := taskFactory(1, "1s", outChan)
@@ -187,13 +187,13 @@ func TestWorkersReuse(t *testing.T) {
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
-	outChan := make(chan string)
+	outChan := make(chan TaskResult)
 	task := &Task{
-		Task: func() string {
+		Task: func() TaskResult {
 			time.Sleep(time.Duration(100) * time.Millisecond)
 			return "OK"
 		},
-		TaskResult: outChan,
+		Result: outChan,
 	}
 	//lets create concurrentTasks amount of workers
 	for i := 0; i < concurrentTasks; i++ {
@@ -248,7 +248,7 @@ func (o *ObserverStub) AllWorkersDisposed(p *Pool) {
 	o.AllWorkersDisposedCallback(p)
 }
 
-func runProcess(m *Pool, t *testing.T, maxConcurrentWorkers int, outChan chan string) {
+func runProcess(m *Pool, t *testing.T, maxConcurrentWorkers int, outChan chan TaskResult) {
 	task := taskFactory(1, "", outChan)
 	timeout, processErr := m.AssignTask(task, maxConcurrentWorkers, time.Duration(30)*time.Second)
 	if processErr != nil {
@@ -259,14 +259,14 @@ func runProcess(m *Pool, t *testing.T, maxConcurrentWorkers int, outChan chan st
 	}
 }
 
-func taskFactory(delay int64, id string, outChan chan string) *Task {
-	taskF := func() string {
+func taskFactory(delay int64, id string, outChan chan TaskResult) *Task {
+	taskF := func() TaskResult {
 		start := time.Now()
 		time.Sleep(time.Duration(delay) * time.Second)
 		return fmt.Sprintf("Task %s started at %s", id, start.Format("15:04:05"))
 	}
 	return &Task{
-		Task:       taskF,
-		TaskResult: outChan,
+		Task:   taskF,
+		Result: outChan,
 	}
 }
