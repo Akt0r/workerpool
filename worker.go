@@ -1,10 +1,5 @@
 package workerpool
 
-import (
-	"fmt"
-	"time"
-)
-
 //Task sample task type
 type Task struct {
 	Task   func() TaskResult
@@ -17,7 +12,6 @@ type TaskResult interface {
 
 //Worker provides simple processing structure
 type Worker struct {
-	Name         string
 	StopSignal   chan void
 	StopCallback func(*Worker)
 	listening    bool
@@ -44,8 +38,7 @@ func (w *Worker) Listen(taskQueue <-chan *Task) {
 					continue
 				}
 				taskResult := task.Task()
-				verboseTaskResult := fmt.Sprintf("%s complete work at %s %s", w.Name, time.Now().Format("15:04:05"), taskResult)
-				task.Result <- verboseTaskResult
+				task.Result <- taskResult
 				select {
 				case <-w.StopSignal:
 					{

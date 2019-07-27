@@ -209,6 +209,7 @@ func TestWorkersReuse(t *testing.T) {
 	//so we have concurrentTasks amount of idle workers
 	//from now on no new workers should be created
 	//for incoming tasks
+	t.Log(sut.String())
 	restrictiveObs := &ObserverStub{}
 	restrictiveObs.WorkerCreatedCallback = func(p *Pool) {
 		t.Log(p.String())

@@ -12,9 +12,7 @@ func TestSequentialWorkV(t *testing.T) {
 	taskQueue := make(chan *Task)
 	outChan := make(chan TaskResult)
 	durationTests := [...]struct{ delay, total int }{{1, 1}, {1, 2}, {1, 3}}
-	w := Worker{
-		Name: "1",
-	}
+	w := Worker{}
 	go w.Listen(taskQueue)
 
 	start := time.Now()
