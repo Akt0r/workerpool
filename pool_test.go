@@ -183,7 +183,8 @@ func TestManagerTimeOut(t *testing.T) {
 func TestWorkersReuse(t *testing.T) {
 	t.Parallel()
 	concurrentTasks := 10
-	sut, ctorErr := NewPool(0)
+	maxConcurrentWorkers := 0
+	sut, ctorErr := NewPool(maxConcurrentWorkers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
@@ -210,6 +211,7 @@ func TestWorkersReuse(t *testing.T) {
 	//for incoming tasks
 	restrictiveObs := &ObserverStub{}
 	restrictiveObs.WorkerCreatedCallback = func(p *Pool) {
+		t.Log(p.String())
 		t.Fatalf("Oh no. Worker has been created.")
 	}
 	restrictiveObs.WorkerDisposedCallback = func(p *Pool) {}

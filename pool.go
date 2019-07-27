@@ -99,6 +99,13 @@ func (p *Pool) RegisterObserver(o Observer) error {
 	return nil
 }
 
+//String provides pool state for debug
+func (p *Pool) String() string {
+	p.vacanciesLock.RLock()
+	defer p.vacanciesLock.RUnlock()
+	return fmt.Sprintf("Worker amount: %d", len(p.workers))
+}
+
 //createWorker creates a new worker and add it
 //in pools workers collection
 func (p *Pool) createWorker() {
