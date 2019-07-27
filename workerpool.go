@@ -11,8 +11,8 @@ type void struct{}
 
 var signal void
 
-// Pool позволяет распределять работу на несколько
-// исполнителей
+//Pool provides infrastructure for asynchronous task execution
+//with support of bounded concurrency
 type Pool struct {
 	taskQueue      chan *Task
 	vacancyChanged chan void
@@ -24,7 +24,7 @@ type Pool struct {
 	obsLock        sync.RWMutex
 }
 
-//NewPool возвращает новый инициализированный объект Pool
+//NewPool returns pool instance
 func NewPool(maxWorkerCount int) (*Pool, error) {
 	if maxWorkerCount < 0 {
 		return nil, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
@@ -39,8 +39,8 @@ func NewPool(maxWorkerCount int) (*Pool, error) {
 	return pool, nil
 }
 
-//AssignTask распределяет работу между несколькими исполнителями
-//Возвращает флаг таймаута поиска исполнителя и ошибку
+//AssignTask assigns new task to pool. It blocks execution until
+//there is a free worker to execute task or timeout is reached
 func (p *Pool) AssignTask(request *Task, maxWorkerCount int, timeout time.Duration) (bool, error) {
 	if maxWorkerCount < 0 {
 		return false, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
@@ -99,8 +99,8 @@ func (p *Pool) RegisterObserver(o Observer) error {
 	return nil
 }
 
-//createWorker создаёт нового исполнителя и регистрирует
-//его в справочнике исполнителей workers
+//createWorker creates a new worker and add it
+//in pools workers collection
 func (p *Pool) createWorker() {
 	workerStopped := func(w *Worker) {
 		p.vacanciesLock.Lock()
@@ -134,7 +134,8 @@ func (p *Pool) createWorker() {
 	go worker.Listen(p.taskQueue)
 }
 
-//setupVacancies управляет количеством текущих вакансий
+//setupVacancies changes maximum amount of tasks that pool
+//can process simultaneously
 func (p *Pool) setupVacancies(maxWorkerCount int, isInit bool) {
 	p.vacanciesLock.Lock()
 	defer p.vacanciesLock.Unlock()
@@ -146,12 +147,12 @@ func (p *Pool) setupVacancies(maxWorkerCount int, isInit bool) {
 	if !p.isInfiniteWorkersAllowed() {
 		currentWorkersCount := len(p.workers)
 		p.vacancies = make(chan void, maxWorkerCount)
-		//Создадим в новом канале вакансий вакансии в количестве maxWorkerCount - currentWorkersCount
+		//Create amount of vacancies equal to maxWorkerCount - currentWorkersCount
 		for i := currentWorkersCount; i < maxWorkerCount; i++ {
 			p.vacancies <- signal
 		}
 		i := 0
-		//Пошлём "лишним" исполнителям сигнал остановки
+		//Stop exceeded workres
 		for w := range p.workers {
 			if i >= currentWorkersCount-maxWorkerCount {
 				break
@@ -159,7 +160,7 @@ func (p *Pool) setupVacancies(maxWorkerCount int, isInit bool) {
 			select {
 			case w.StopSignal <- signal:
 			default:
-				//Если данный исполнитель уже получил сигнал, то продолжим
+				//Continue if stop signal to that worker has been sent already
 			}
 			i++
 		}
@@ -170,8 +171,8 @@ func (p *Pool) setupVacancies(maxWorkerCount int, isInit bool) {
 	p.notifyForVacancies()
 }
 
-//notifyForVacancies уведомляет все ожидающие запросы
-//об изменившихся вакансиях
+//notifyForVacancies send signal about new vacancies to all goroutines
+//that wait for free worker
 func (p *Pool) notifyForVacancies() {
 	for {
 		select {
@@ -183,8 +184,7 @@ func (p *Pool) notifyForVacancies() {
 	}
 }
 
-//isInfiniteWorkersAllowed возвращает признак  отсутсвия ограничения
-//количества одновременно работающих исполнителей
+//isInfiniteWorkersAllowed checks for unbounded concurrency pool mode
 func (p *Pool) isInfiniteWorkersAllowed() bool {
 	return p.maxWorkerCount == 0
 }
