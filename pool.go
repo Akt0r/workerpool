@@ -24,8 +24,8 @@ type Pool struct {
 	obsLock        sync.RWMutex
 }
 
-//NewPool returns pool instance
-func NewPool(maxWorkerCount int) (*Pool, error) {
+//New returns pool instance
+func New(maxWorkerCount int) (*Pool, error) {
 	if maxWorkerCount < 0 {
 		return nil, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
 	}
