@@ -34,22 +34,30 @@ func (w *Worker) Listen(taskQueue <-chan *Task) {
 			}
 		case task := <-taskQueue:
 			{
-				if task.Task == nil || task.Result == nil {
-					continue
-				}
-				taskResult := task.Task()
-				task.Result <- taskResult
-				select {
-				case <-w.StopSignal:
-					{
-						if w.StopCallback != nil {
-							w.StopCallback(w)
-						}
-						return
-					}
-				default:
+				if w.ProcessTask(task) {
+					return
 				}
 			}
 		}
 	}
+}
+
+//ProcessTask performs task
+func (w *Worker) ProcessTask(task *Task) bool {
+	if task.Task == nil || task.Result == nil {
+		return false
+	}
+	taskResult := task.Task()
+	task.Result <- taskResult
+	select {
+	case <-w.StopSignal:
+		{
+			if w.StopCallback != nil {
+				w.StopCallback(w)
+			}
+			return true
+		}
+	default:
+	}
+	return false
 }

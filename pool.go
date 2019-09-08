@@ -76,7 +76,14 @@ func (p *Pool) AssignTask(request *Task, maxWorkerCount int, timeout time.Durati
 			}
 		case <-vacancies:
 			{
-				p.createWorker()
+				w := p.createWorker()
+				go func() {
+					if !w.ProcessTask(request) {
+						w.Listen(p.taskQueue)
+					}
+				}()
+				//Task successfully assigned
+				return false, nil
 			}
 		case <-time.After(timeout):
 			{
@@ -114,7 +121,7 @@ func (p *Pool) String() string {
 
 //createWorker creates a new worker and add it
 //in pools workers collection
-func (p *Pool) createWorker() {
+func (p *Pool) createWorker() *Worker {
 	workerStopped := func(w *Worker) {
 		p.vacanciesLock.Lock()
 		delete(p.workers, w)
@@ -144,7 +151,7 @@ func (p *Pool) createWorker() {
 	p.notifyObservers(func(o Observer) {
 		o.WorkerCreated(p)
 	})
-	go worker.Listen(p.taskQueue)
+	return worker
 }
 
 //setupVacancies changes maximum amount of tasks that pool

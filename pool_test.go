@@ -1,10 +1,12 @@
 package workerpool
 
 import (
+	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 func TestSingleWorkerSingleTask(t *testing.T) {
@@ -17,10 +19,7 @@ func TestSingleWorkerSingleTask(t *testing.T) {
 	}
 
 	outChan := make(chan TaskResult)
-	runProcesses(sut, maxConcurrentWorkers, outChan, numberOfTasks)
-	// for i := 0; i < numberOfTasks; i++ {
-	// 	runProcess(sut, t, maxConcurrentWorkers, outChan)
-	// }
+	runProcesses(sut, maxConcurrentWorkers, outChan, numberOfTasks, maxConcurrentWorkers)
 
 	wokerCount := sut.WorkerCount()
 	if wokerCount != maxConcurrentWorkers {
@@ -42,9 +41,7 @@ func TestSingleWorker(t *testing.T) {
 	}
 
 	outChan := make(chan TaskResult)
-	for i := 0; i < numberOfTasks; i++ {
-		go runProcess(sut, t, maxConcurrentWorkers, outChan)
-	}
+	runProcesses(sut, maxConcurrentWorkers, outChan, numberOfTasks, maxConcurrentWorkers)
 
 	wokerCount := sut.WorkerCount()
 	if wokerCount != maxConcurrentWorkers {
@@ -66,9 +63,7 @@ func TestMultipleWorkers(t *testing.T) {
 	}
 
 	outChan := make(chan TaskResult)
-	for i := 0; i < numberOfTasks; i++ {
-		runProcess(sut, t, maxConcurrentWorkers, outChan)
-	}
+	runProcesses(sut, maxConcurrentWorkers, outChan, numberOfTasks, maxConcurrentWorkers)
 
 	wokerCount := sut.WorkerCount()
 	if wokerCount != maxConcurrentWorkers {
@@ -82,115 +77,121 @@ func TestMultipleWorkers(t *testing.T) {
 
 func TestDecreaseWorkers(t *testing.T) {
 	t.Parallel()
-	maxConcurrentWorkersInitial := 4
-	maxConcurrentWorkersLater := 2
-	numberOfTasks := 13
-	sut, ctorErr := New(maxConcurrentWorkersInitial)
+	workersTasks := []struct {
+		workers, tasks int
+	}{
+		{4, 4},
+		{2, 4},
+		{1, 4},
+	}
+
+	wdisp := make(chan void, workersTasks[0].workers)
+	obs := &ObserverStub{
+		WorkerDisposedCallback: func(p *Pool) {
+			wdisp <- signal
+		},
+		AllWorkersDisposedCallback: func(p *Pool) {},
+		WorkerCreatedCallback:      func(p *Pool) {},
+	}
+	sut, ctorErr := New(workersTasks[0].workers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
+	sut.RegisterObserver(obs)
 
 	outChan := make(chan TaskResult)
-	for i := 0; i < maxConcurrentWorkersInitial; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersInitial, outChan)
-	}
 
-	time.Sleep(time.Duration(100) * time.Millisecond)
+	runProcesses(sut, workersTasks[0].workers, outChan, workersTasks[0].tasks, workersTasks[0].workers)
 	wokerCount := sut.WorkerCount()
-	if wokerCount != maxConcurrentWorkersInitial {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, maxConcurrentWorkersInitial)
+	if wokerCount != workersTasks[0].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[0].workers)
 	}
-
-	for i := maxConcurrentWorkersInitial; i < numberOfTasks-5; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersLater, outChan)
-	}
-
-	time.Sleep(time.Duration(4000) * time.Millisecond)
-	wokerCount = sut.WorkerCount()
-	if wokerCount != maxConcurrentWorkersLater {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, maxConcurrentWorkersLater)
-	}
-
-	for i := numberOfTasks - 5; i < numberOfTasks; i++ {
-		go runProcess(sut, t, 1, outChan)
-	}
-
-	wokerCount = sut.WorkerCount()
-	if wokerCount != 1 {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, 1)
-	}
-
-	for i := 0; i < numberOfTasks; i++ {
+	for i := 0; i < workersTasks[0].workers; i++ {
 		t.Log(<-outChan)
+	}
+
+	runProcesses(sut, workersTasks[1].workers, outChan, workersTasks[1].tasks, workersTasks[1].workers)
+	for i := 0; i < workersTasks[0].workers-workersTasks[1].workers; i++ {
+		<-wdisp
+	}
+	wokerCount = sut.WorkerCount()
+	if wokerCount != workersTasks[1].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[1].workers)
+	}
+
+	runProcesses(sut, workersTasks[2].workers, outChan, workersTasks[2].tasks, 0)
+
+	for i := 0; i < workersTasks[1].tasks+workersTasks[2].tasks; i++ {
+		t.Log(<-outChan)
+	}
+	for i := 0; i < workersTasks[1].workers-workersTasks[2].workers; i++ {
+		<-wdisp
+	}
+	wokerCount = sut.WorkerCount()
+	if wokerCount != workersTasks[2].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[2].workers)
 	}
 }
 
 func TestIncreaseWorkers(t *testing.T) {
 	t.Parallel()
-	maxConcurrentWorkersInitial := 1
-	maxConcurrentWorkersLater := 5
-	numberOfTasks := 16
-	sut, ctorErr := New(maxConcurrentWorkersInitial)
+	workersTasks := []struct {
+		workers, tasks int
+	}{
+		{1, 4},
+		{5, 16},
+	}
+	sut, ctorErr := New(workersTasks[0].workers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
-
 	outChan := make(chan TaskResult)
-	for i := 0; i < 4; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersInitial, outChan)
-	}
-	time.Sleep(time.Duration(2000) * time.Millisecond)
 
+	runProcesses(sut, workersTasks[0].workers, outChan, workersTasks[0].tasks, workersTasks[0].workers)
 	wokerCount := sut.WorkerCount()
-	if wokerCount != maxConcurrentWorkersInitial {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, maxConcurrentWorkersInitial)
+	if wokerCount != workersTasks[0].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[0].workers)
 	}
 
-	for i := 4; i < numberOfTasks; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersLater, outChan)
-	}
-
+	runProcesses(sut, workersTasks[1].workers, outChan, workersTasks[1].tasks, workersTasks[1].workers-workersTasks[0].workers)
 	wokerCount = sut.WorkerCount()
-	if wokerCount != maxConcurrentWorkersLater {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, maxConcurrentWorkersLater)
+	if wokerCount != workersTasks[1].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[1].workers)
 	}
 
-	for i := 0; i < numberOfTasks; i++ {
+	for i := 0; i < workersTasks[0].tasks+workersTasks[1].tasks; i++ {
 		t.Log(<-outChan)
 	}
 }
 
 func TestIncreaseToInfiniteWorkers(t *testing.T) {
 	t.Parallel()
-	maxConcurrentWorkersInitial := 1
-	maxConcurrentWorkersLater := 0
-	numberOfTasks := 16
-	sut, ctorErr := New(maxConcurrentWorkersInitial)
+	workersTasks := []struct {
+		workers, tasks int
+	}{
+		{1, 4},
+		{0, 16},
+	}
+	sut, ctorErr := New(workersTasks[0].workers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
-
 	outChan := make(chan TaskResult)
-	for i := 0; i < 4; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersInitial, outChan)
-	}
 
-	time.Sleep(time.Duration(2000) * time.Millisecond)
+	runProcesses(sut, workersTasks[0].workers, outChan, workersTasks[0].tasks, workersTasks[0].workers)
 	wokerCount := sut.WorkerCount()
-	if wokerCount != maxConcurrentWorkersInitial {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, maxConcurrentWorkersInitial)
+	if wokerCount != workersTasks[0].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[0].workers)
 	}
 
-	for i := 4; i < numberOfTasks; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersLater, outChan)
-	}
-
+	totalWorkers := workersTasks[0].tasks + workersTasks[1].tasks
+	runProcesses(sut, workersTasks[1].workers, outChan, workersTasks[1].tasks, workersTasks[1].tasks)
 	wokerCount = sut.WorkerCount()
-	if wokerCount != 12 {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, 12)
+	if wokerCount != totalWorkers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, totalWorkers)
 	}
 
-	for i := 0; i < numberOfTasks; i++ {
+	for i := 0; i < workersTasks[0].tasks+workersTasks[1].tasks; i++ {
 		t.Log(<-outChan)
 	}
 }
@@ -330,17 +331,22 @@ func (o *ObserverStub) AllWorkersDisposed(p *Pool) {
 	o.AllWorkersDisposedCallback(p)
 }
 
-func runProcesses(p *Pool, maxConcurrentWorkers int, outChan chan TaskResult, tasksCount int) {
+func runProcesses(p *Pool, maxConcurrentWorkers int, outChan chan TaskResult, tasksCount int, waitForCount int) {
 	task := taskFactory(1, "", outChan)
-	var wg sync.WaitGroup
-	wg.Add(tasksCount)
+	ctx := context.TODO()
+	sem := semaphore.NewWeighted(int64(tasksCount))
+	if err := sem.Acquire(ctx, int64(tasksCount)); err != nil {
+		panic(fmt.Sprintf("Failed to acquire semaphore: %v", err))
+	}
 	for i := 0; i < tasksCount; i++ {
 		go func() {
 			p.AssignTask(task, maxConcurrentWorkers, time.Duration(30)*time.Second)
-			wg.Done()
+			sem.Release(1)
 		}()
 	}
-	wg.Wait()
+	if err := sem.Acquire(ctx, int64(waitForCount)); err != nil {
+		panic(fmt.Sprintf("Failed to acquire semaphore: %v", err))
+	}
 }
 
 func runProcess(p *Pool, t *testing.T, maxConcurrentWorkers int, outChan chan TaskResult) {
