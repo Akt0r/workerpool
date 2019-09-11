@@ -198,35 +198,46 @@ func TestIncreaseToInfiniteWorkers(t *testing.T) {
 
 func TestDecreaseFromInfiniteWorkers(t *testing.T) {
 	t.Parallel()
-	maxConcurrentWorkersInitial := 0
-	maxConcurrentWorkersLater := 1
-	numberOfTasks := 10
-	sut, ctorErr := New(maxConcurrentWorkersInitial)
+	workersTasks := []struct {
+		workers, tasks int
+	}{
+		{0, 5},
+		{2, 6},
+	}
+	sut, ctorErr := New(workersTasks[0].workers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
+	wdisp := make(chan void, workersTasks[0].tasks)
+	obs := &ObserverStub{
+		WorkerDisposedCallback: func(p *Pool) {
+			wdisp <- signal
+		},
+		AllWorkersDisposedCallback: func(p *Pool) {},
+		WorkerCreatedCallback:      func(p *Pool) {},
+	}
+	sut.RegisterObserver(obs)
 
 	outChan := make(chan TaskResult)
-	for i := 0; i < 5; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersInitial, outChan)
-	}
-
-	time.Sleep(time.Duration(10) * time.Microsecond)
+	runProcesses(sut, workersTasks[0].workers, outChan, workersTasks[0].tasks, workersTasks[0].tasks)
 	wokerCount := sut.WorkerCount()
-	if wokerCount != 5 {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, 5)
+	if wokerCount != workersTasks[0].tasks {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[0].tasks)
+	}
+	for i := 0; i < workersTasks[0].tasks; i++ {
+		t.Log(<-outChan)
 	}
 
-	for i := 5; i < numberOfTasks; i++ {
-		go runProcess(sut, t, maxConcurrentWorkersLater, outChan)
+	runProcesses(sut, workersTasks[1].workers, outChan, workersTasks[1].tasks, workersTasks[1].workers)
+	for i:=0; i< workersTasks[0].tasks - workersTasks[1].workers; i++ {
+		<- wdisp
 	}
-
 	wokerCount = sut.WorkerCount()
-	if wokerCount != maxConcurrentWorkersLater {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, maxConcurrentWorkersLater)
+	if wokerCount != workersTasks[1].workers {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[1].workers)
 	}
 
-	for i := 0; i < numberOfTasks; i++ {
+	for i := 0; i < workersTasks[1].tasks; i++ {
 		t.Log(<-outChan)
 	}
 }
@@ -256,40 +267,31 @@ func TestManagerTimeOut(t *testing.T) {
 
 func TestWorkersReuse(t *testing.T) {
 	t.Parallel()
-	concurrentTasks := 10
-	maxConcurrentWorkers := 0
-	sut, ctorErr := New(maxConcurrentWorkers)
+	workersTasks := []struct {
+		workers, tasks int
+	}{
+		{0, 10},
+	}
+	sut, ctorErr := New(workersTasks[0].workers)
 	if ctorErr != nil {
 		t.Fatalf("ctorErr: %s", ctorErr.Error())
 	}
 	outChan := make(chan TaskResult)
-	task := &Task{
-		Task: func() TaskResult {
-			time.Sleep(time.Duration(100) * time.Millisecond)
-			return "OK"
-		},
-		Result: outChan,
-	}
-	//lets create concurrentTasks amount of workers
-	for i := 0; i < concurrentTasks; i++ {
-		if timeout, err := sut.AssignTask(task, 0, time.Duration(100*time.Second)); timeout || err != nil {
-			t.Fatalf("Task assigning failed or timeout has been reached")
-		}
-	}
+	//lets create workersTasks[0].tasks amount of workers
+	runProcesses(sut, workersTasks[0].workers, outChan, workersTasks[0].tasks, workersTasks[0].tasks)
 
 	wokerCount := sut.WorkerCount()
-	if wokerCount != concurrentTasks {
-		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, concurrentTasks)
+	if wokerCount != workersTasks[0].tasks {
+		t.Fatalf("Worker count is %d, expected count is %d", wokerCount, workersTasks[0].tasks)
 	}
 
 	//now wait for workers complete their tasks
-	for i := 0; i < concurrentTasks; i++ {
+	for i := 0; i < workersTasks[0].tasks; i++ {
 		<-outChan
 	}
-	//so we have concurrentTasks amount of idle workers
+	//so we have workersTasks[0].tasks amount of idle workers
 	//from now on no new workers should be created
 	//for incoming tasks
-	t.Log(sut.String())
 	restrictiveObs := &ObserverStub{}
 	restrictiveObs.WorkerCreatedCallback = func(p *Pool) {
 		t.Log(p.String())
@@ -300,14 +302,9 @@ func TestWorkersReuse(t *testing.T) {
 
 	sut.RegisterObserver(restrictiveObs)
 	for i := 0; i < 10; i++ {
-		//lets create concurrentTasks amount of workers
-		for i := 0; i < concurrentTasks; i++ {
-			if timeout, err := sut.AssignTask(task, 0, time.Duration(100*time.Second)); timeout || err != nil {
-				t.Fatalf("Task assigning failed or timeout has been reached")
-			}
-		}
+		runProcesses(sut, workersTasks[0].workers, outChan, workersTasks[0].tasks, 0)
 		//now wait for workers complete their tasks
-		for i := 0; i < concurrentTasks; i++ {
+		for i := 0; i < workersTasks[0].tasks; i++ {
 			<-outChan
 		}
 	}
