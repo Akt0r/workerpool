@@ -22,31 +22,29 @@ type Pool struct {
 	vacanciesLock  sync.RWMutex
 	observers      *list.List
 	obsLock        sync.RWMutex
+	initComplete   bool
 }
 
 //New returns pool instance
-func New(maxWorkerCount int) (*Pool, error) {
-	if maxWorkerCount < 0 {
-		return nil, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
-	}
+func New(options ...func(*Pool) error) (*Pool, error) {
 	pool := &Pool{
 		taskQueue:      make(chan *Task),
 		vacancyChanged: make(chan void),
 		workers:        make(map[*Worker]void),
 		observers:      list.New(),
 	}
-	pool.setupVacancies(maxWorkerCount, true)
+	for _, opt := range options {
+		if err := opt(pool); err != nil {
+			return nil, err
+		}
+	}
+	pool.initComplete = true
 	return pool, nil
 }
 
 //AssignTask assigns new task to pool. It blocks execution until
 //there is a free worker to execute task or timeout is reached
-func (p *Pool) AssignTask(request *Task, maxWorkerCount int, timeout time.Duration) (bool, error) {
-	if maxWorkerCount < 0 {
-		return false, fmt.Errorf("Negative value %v for maxWorkerCount is not allowed", maxWorkerCount)
-	}
-	p.setupVacancies(maxWorkerCount, false)
-
+func (p *Pool) AssignTask(request *Task, timeout time.Duration) (bool, error) {
 	vacancies := p.vacancies
 	for {
 		//We prioritize worker reuse over creating
@@ -92,6 +90,51 @@ func (p *Pool) AssignTask(request *Task, maxWorkerCount int, timeout time.Durati
 			}
 		}
 	}
+}
+
+//SetConcurrencyLimit setups pool workers capacity thus
+//bounding concurrency rate. Zero have special meaning of
+//having no upper bound. Default is zero. This functuion
+//can be called at any time. Setting this value below the
+//current actual amount of workers cause exceeding workers
+//will be released after completion of their tasks.
+func (p *Pool) SetConcurrencyLimit(lim int) error {
+	if lim < 0 {
+		return fmt.Errorf("Negative value for concurrency limit is not allowed. Was %d", lim)
+	}
+	p.vacanciesLock.Lock()
+	defer p.vacanciesLock.Unlock()
+	if p.initComplete && p.maxWorkerCount == lim {
+		return nil
+	}
+	p.maxWorkerCount = lim
+
+	if !p.isInfiniteWorkersAllowed() {
+		currentWorkersCount := len(p.workers)
+		p.vacancies = make(chan void, lim)
+		//Create amount of vacancies equal to maxWorkerCount - currentWorkersCount
+		for i := currentWorkersCount; i < lim; i++ {
+			p.vacancies <- signal
+		}
+		i := 0
+		//Stop exceeded workres
+		for w := range p.workers {
+			if i >= currentWorkersCount-lim {
+				break
+			}
+			select {
+			case w.StopSignal <- signal:
+			default:
+				//Continue if stop signal to that worker has been sent already
+			}
+			i++
+		}
+	} else {
+		p.vacancies = make(chan void, 1)
+		p.vacancies <- signal
+	}
+	p.notifyForVacancies()
+	return nil
 }
 
 //RegisterObserver registers observer that will get notifications
@@ -152,43 +195,6 @@ func (p *Pool) createWorker() *Worker {
 		o.WorkerCreated(p)
 	})
 	return worker
-}
-
-//setupVacancies changes maximum amount of tasks that pool
-//can process simultaneously
-func (p *Pool) setupVacancies(maxWorkerCount int, isInit bool) {
-	p.vacanciesLock.Lock()
-	defer p.vacanciesLock.Unlock()
-	if !isInit && p.maxWorkerCount == maxWorkerCount {
-		return
-	}
-	p.maxWorkerCount = maxWorkerCount
-
-	if !p.isInfiniteWorkersAllowed() {
-		currentWorkersCount := len(p.workers)
-		p.vacancies = make(chan void, maxWorkerCount)
-		//Create amount of vacancies equal to maxWorkerCount - currentWorkersCount
-		for i := currentWorkersCount; i < maxWorkerCount; i++ {
-			p.vacancies <- signal
-		}
-		i := 0
-		//Stop exceeded workres
-		for w := range p.workers {
-			if i >= currentWorkersCount-maxWorkerCount {
-				break
-			}
-			select {
-			case w.StopSignal <- signal:
-			default:
-				//Continue if stop signal to that worker has been sent already
-			}
-			i++
-		}
-	} else {
-		p.vacancies = make(chan void, 1)
-		p.vacancies <- signal
-	}
-	p.notifyForVacancies()
 }
 
 //notifyForVacancies send signal about new vacancies to all goroutines
