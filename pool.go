@@ -22,23 +22,23 @@ type Pool struct {
 	vacanciesLock  sync.RWMutex
 	observers      *list.List
 	obsLock        sync.RWMutex
-	initComplete   bool
 }
 
 //New returns pool instance
 func New(options ...func(*Pool) error) (*Pool, error) {
 	pool := &Pool{
 		taskQueue:      make(chan *Task),
+		vacancies:      make(chan void, 1),
 		vacancyChanged: make(chan void),
 		workers:        make(map[*Worker]void),
 		observers:      list.New(),
 	}
+	pool.vacancies <- signal
 	for _, opt := range options {
 		if err := opt(pool); err != nil {
 			return nil, err
 		}
 	}
-	pool.initComplete = true
 	return pool, nil
 }
 
@@ -104,7 +104,7 @@ func (p *Pool) SetConcurrencyLimit(lim int) error {
 	}
 	p.vacanciesLock.Lock()
 	defer p.vacanciesLock.Unlock()
-	if p.initComplete && p.maxWorkerCount == lim {
+	if p.maxWorkerCount == lim {
 		return nil
 	}
 	p.maxWorkerCount = lim
